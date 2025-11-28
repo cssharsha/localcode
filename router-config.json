@@ -1,0 +1,23 @@
+{
+  "LOG": true,
+  "LOG_LEVEL": "info",
+  "HOST": "0.0.0.0",
+  "PORT": 3456,
+  "APIKEY": "sk-ant-api03-AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899",
+  "API_TIMEOUT_MS": 300000,
+  "Providers": [
+    {
+      "name": "ollama",
+      "api_base_url": "http://ollama:11434",
+      "api_key": "ollama",
+      "models": [
+        "qwen2.5-coder:14b"
+      ]
+    }
+  ],
+  "Router": {
+    "default": "ollama,qwen2.5-coder:14b",
+    "think": "ollama,qwen2.5-coder:14b",
+    "background": "ollama,qwen2.5-coder:14b"
+  }
+}
