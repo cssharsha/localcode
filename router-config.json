@@ -7,17 +7,21 @@
   "API_TIMEOUT_MS": 300000,
   "Providers": [
     {
-      "name": "ollama",
-      "api_base_url": "http://ollama:11434",
-      "api_key": "ollama",
+      "name": "llama-cpp",
+      "api_base_url": "http://llama-cpp:8080",
+      "api_key": "no-key",
       "models": [
-        "qwen2.5-coder:14b"
+        "bartowski_Nemotron-Mini-4B-Instruct-GGUF_Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",
+        "bartowski_Qwen2.5-Coder-7B-Instruct-GGUF_Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+        "bartowski_nvidia_Nemotron-3-Nano-30B-A3B-GGUF_nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf",
+        "bartowski_Qwen2.5-Coder-32B-Instruct-GGUF_Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+        "bartowski_DeepSeek-Coder-V2-Lite-Instruct-GGUF_DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf"
       ]
     }
   ],
   "Router": {
-    "default": "ollama,qwen2.5-coder:14b",
-    "think": "ollama,qwen2.5-coder:14b",
-    "background": "ollama,qwen2.5-coder:14b"
+    "default": "llama-cpp,bartowski_Nemotron-Mini-4B-Instruct-GGUF_Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",
+    "think": "llama-cpp,bartowski_Nemotron-Mini-4B-Instruct-GGUF_Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",
+    "background": "llama-cpp,bartowski_Nemotron-Mini-4B-Instruct-GGUF_Nemotron-Mini-4B-Instruct-Q4_K_M.gguf"
   }
 }

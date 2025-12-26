@@ -10,9 +10,9 @@ services:
       - "11336:8080"
     command:
       - --hf-repo
-      - bartowski/nvidia_Nemotron-3-Nano-30B-A3B-GGUF
+      - bartowski/Qwen2.5-Coder-32B-Instruct-GGUF
       - --hf-file
-      - nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf
+      - Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf
       - --ctx-size
       - "16384"
       - --batch-size
@@ -40,8 +40,6 @@ services:
       - /data/llama-models:/root/.cache/llama.cpp
     devices:
       - /dev/dri:/dev/dri
-    environment:
-      - GGML_VK_DEBUG=1
     deploy:
       resources:
         reservations:
