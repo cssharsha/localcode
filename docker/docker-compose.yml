@@ -57,6 +57,6 @@ services:
     ports:
       - "3000:3456"
     volumes:
-      - ./router-config.json:/root/.claude-code-router/config.json
+      - ../config/router-config.json:/root/.claude-code-router/config.json
     depends_on:
       - llama-cpp

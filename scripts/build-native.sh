@@ -60,6 +60,46 @@ fi
 echo "✓ All dependencies found"
 echo ""
 
+# Detect GPUs and determine build configuration
+echo "Detecting GPUs..."
+NVIDIA_COUNT=$(lspci | grep -i "VGA.*NVIDIA" | wc -l)
+INTEL_COUNT=$(lspci | grep -i "VGA.*Intel" | wc -l)
+AMD_COUNT=$(lspci | grep -i "VGA.*AMD" | wc -l)
+TOTAL_GPUS=$((NVIDIA_COUNT + INTEL_COUNT + AMD_COUNT))
+
+echo "  NVIDIA GPUs: $NVIDIA_COUNT"
+echo "  Intel GPUs: $INTEL_COUNT"
+echo "  AMD GPUs: $AMD_COUNT"
+
+# Determine build configuration
+USE_CUDA="OFF"
+USE_VULKAN="OFF"
+
+if [ "$NVIDIA_COUNT" -gt 0 ]; then
+    USE_CUDA="ON"
+fi
+
+if [ "$INTEL_COUNT" -gt 0 ] || [ "$AMD_COUNT" -gt 0 ]; then
+    USE_VULKAN="ON"
+fi
+
+# If only NVIDIA, no need for Vulkan
+if [ "$NVIDIA_COUNT" -eq "$TOTAL_GPUS" ] && [ "$NVIDIA_COUNT" -gt 0 ]; then
+    USE_VULKAN="OFF"
+    echo "  → CUDA-only build (all NVIDIA)"
+# If no NVIDIA, only Vulkan
+elif [ "$NVIDIA_COUNT" -eq 0 ] && [ "$TOTAL_GPUS" -gt 0 ]; then
+    USE_CUDA="OFF"
+    echo "  → Vulkan-only build (no NVIDIA)"
+# Mixed GPUs
+elif [ "$NVIDIA_COUNT" -gt 0 ] && [ "$TOTAL_GPUS" -gt "$NVIDIA_COUNT" ]; then
+    echo "  → CUDA + Vulkan build (mixed GPUs)"
+else
+    echo "  ⚠ No GPUs detected, building CPU-only"
+fi
+
+echo ""
+
 # Clone or update llama.cpp
 if [ ! -d "$LLAMA_SRC" ]; then
     echo "Cloning llama.cpp..."
@@ -79,14 +119,14 @@ cd build
 # Configure with CMake
 echo ""
 echo "Configuring with CMake..."
-echo "  CUDA: ON (Nvidia GPU acceleration)"
-echo "  Vulkan: ON (Intel GPU + dual GPU support)"
+echo "  CUDA: $USE_CUDA"
+echo "  Vulkan: $USE_VULKAN"
 echo ""
 
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DGGML_CUDA=ON \
-    -DGGML_VULKAN=ON \
+    -DGGML_CUDA=$USE_CUDA \
+    -DGGML_VULKAN=$USE_VULKAN \
     -DLLAMA_CURL=ON
 
 # Build

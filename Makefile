@@ -1,4 +1,4 @@
-.PHONY: help setup build install start stop restart status logs test verify gpu-check model-info backup restore use-nemotron use-qwen use-nemotron-nano use-qwen32b use-deepseek current-model model-status opencode-model config-install config-uninstall config-status config-edit clean
+.PHONY: help setup build install start stop restart status logs test test-long-context test-benchmark test-load verify gpu-check model-info backup restore use-nemotron use-qwen use-nemotron-nano use-qwen32b use-deepseek use-nemotron-vllm current-model model-status opencode-model config-install config-uninstall config-status config-edit clean
 
 # Directories
 LLAMA_SRC = /tmp/llama.cpp
@@ -12,6 +12,12 @@ LOG_FILE = /tmp/llama-server.log
 # GPU Configuration
 export VK_ICD_FILENAMES = /usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json
 
+# Context size presets (for experimentation)
+CTX_4K = 4096
+CTX_8K = 8192
+CTX_16K = 16384
+CTX_32K = 32768
+
 # Model configurations
 NEMOTRON_MODEL = $(MODEL_DIR)/bartowski_Nemotron-Mini-4B-Instruct-GGUF_Nemotron-Mini-4B-Instruct-Q4_K_M.gguf
 NEMOTRON_ARGS = --ctx-size 32768 --device CUDA0 --n-gpu-layers -1 --threads 8
@@ -20,13 +26,13 @@ QWEN_MODEL = $(MODEL_DIR)/bartowski_Qwen2.5-Coder-7B-Instruct-GGUF_Qwen2.5-Coder
 QWEN_ARGS = --ctx-size 32768 --device CUDA0 --n-gpu-layers -1 --threads 8
 
 NEMOTRON_NANO_MODEL = $(MODEL_DIR)/bartowski_nvidia_Nemotron-3-Nano-30B-A3B-GGUF_nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf
-NEMOTRON_NANO_ARGS = --ctx-size 32768 --device Vulkan0 --n-gpu-layers -1 --threads 8
+NEMOTRON_NANO_ARGS = --ctx-size 16384 --device Vulkan0,Vulkan1 --n-gpu-layers -1 --split-mode layer --tensor-split 2,3 --threads 8
 
 QWEN32B_MODEL = $(MODEL_DIR)/bartowski_Qwen2.5-Coder-32B-Instruct-GGUF_Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf
-QWEN32B_ARGS = --ctx-size 32768 --batch-size 512 --ubatch-size 256 --device Vulkan0,Vulkan1 --n-gpu-layers -1 --split-mode layer --tensor-split 2,1 --threads 8
+QWEN32B_ARGS = --ctx-size $(CTX_16K) --batch-size 512 --ubatch-size 256 --device Vulkan0,Vulkan1 --n-gpu-layers -1 --split-mode layer --tensor-split 1,1.4 --threads 8
 
 DEEPSEEK_MODEL = $(MODEL_DIR)/bartowski_DeepSeek-Coder-V2-Lite-Instruct-GGUF_DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf
-DEEPSEEK_ARGS = --ctx-size 32768 --device CUDA0 --n-gpu-layers -1 --threads 8
+DEEPSEEK_ARGS = --ctx-size $(CTX_32K) --device Vulkan0,Vulkan1 --n-gpu-layers -1 --split-mode layer --tensor-split 2,3 --threads 8
 
 # Current model (stored in state file)
 STATE_FILE = .current-model
@@ -47,20 +53,21 @@ help:
 	@echo "  make restart        - Restart llama-server"
 	@echo "  make status         - Show service status"
 	@echo "  make logs           - View llama-server logs"
+	@echo "  make start-vllm     - Start vLLM service"
+	@echo "  make stop-vllm      - Stop vLLM service"
+	@echo "  make status-vllm    - Show vLLM service status"
 	@echo ""
 	@echo "Model Selection (Single GPU - Nvidia only):"
 	@echo "  make use-nemotron   - Nemotron-Mini-4B (32K context, fast)"
 	@echo "  make use-qwen       - Qwen2.5-Coder-7B (32K context, better)"
 	@echo ""
-	@echo "Model Selection (Dual GPU - Nvidia + Intel Arc):"
-	@echo "  make use-nemotron-nano  - Nemotron-3-Nano-30B (32K context, 31 tok/s)"
+	@echo "Model Selection (Dual GPU - Vulkan):"
+	@echo "  make use-nemotron-nano  - Nemotron-3-Nano-30B (16K context, dual Vulkan)"
+	@echo "  make use-qwen32b        - Qwen2.5-Coder-32B (8K context, dual Vulkan) ⭐ Best for coding"
+	@echo "  make use-nemotron-vllm  - Nemotron-3-Nano-30B-A3B (vLLM, dual CUDA)"
 	@echo ""
 	@echo "Model Selection (Single GPU - Nvidia CUDA only):"
 	@echo "  make use-deepseek       - DeepSeek-Coder-V2-Lite (32K context, 33 tok/s) [Vulkan incompatible]"
-	@echo ""
-	@echo "❌ Broken Models:"
-	@echo "  # make use-qwen32b      - ❌ BROKEN: Vulkan corruption + memory issues"
-	@echo "                            Use 'make use-qwen' (7B) or 'make use-nemotron-nano' instead"
 	@echo ""
 	@echo "Information:"
 	@echo "  make current-model  - Show which model is configured/running"
@@ -70,8 +77,11 @@ help:
 	@echo "  make model-info     - Show available models"
 	@echo ""
 	@echo "Testing:"
-	@echo "  make verify         - Verify the setup is working"
-	@echo "  make test           - Test the API endpoint"
+	@echo "  make verify            - Verify the setup is working"
+	@echo "  make test              - Test the API endpoint"
+	@echo "  make test-long-context - Stress test with long context (~5K words)"
+	@echo "  make test-benchmark    - Benchmark token generation speed"
+	@echo "  make test-load         - Run 10 sequential requests (load test)"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  make config-install   - Install OpenCode config (using stow)"
@@ -113,7 +123,7 @@ setup:
 
 # Build llama.cpp from source natively (no Nix)
 build:
-	@./build-native.sh
+	@./scripts/build-native.sh
 
 # Install to ~/.local/bin
 install:
@@ -159,6 +169,7 @@ _start-nemotron:
 		echo "Downloading Nemotron model..."; \
 		LD_LIBRARY_PATH=$(INSTALL_DIR):$$LD_LIBRARY_PATH LD_LIBRARY_PATH=$(INSTALL_DIR):$$LD_LIBRARY_PATH $(INSTALL_DIR)/llama-server --model $(NEMOTRON_MODEL) --hf-repo bartowski/Nemotron-Mini-4B-Instruct-GGUF --hf-file Nemotron-Mini-4B-Instruct-Q4_K_M.gguf --port 11336 --host 0.0.0.0 $(NEMOTRON_ARGS) > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE); \
 	else \
+		echo "Starting Nemotron model..."; \
 		LD_LIBRARY_PATH=$(INSTALL_DIR):$$LD_LIBRARY_PATH LD_LIBRARY_PATH=$(INSTALL_DIR):$$LD_LIBRARY_PATH nohup $(INSTALL_DIR)/llama-server --model $(NEMOTRON_MODEL) --port 11336 --host 0.0.0.0 $(NEMOTRON_ARGS) > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE); \
 	fi
 
@@ -175,6 +186,7 @@ _start-nemotron-nano:
 		echo "Downloading Nemotron Nano model..."; \
 		LD_LIBRARY_PATH=$(INSTALL_DIR):$$LD_LIBRARY_PATH $(INSTALL_DIR)/llama-server --model $(NEMOTRON_NANO_MODEL) --hf-repo bartowski/nvidia_Nemotron-3-Nano-30B-A3B-GGUF --hf-file nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf --port 11336 --host 0.0.0.0 $(NEMOTRON_NANO_ARGS) > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE); \
 	else \
+		echo "Starting Nemotron Nano model..."; \
 		LD_LIBRARY_PATH=$(INSTALL_DIR):$$LD_LIBRARY_PATH nohup $(INSTALL_DIR)/llama-server --model $(NEMOTRON_NANO_MODEL) --port 11336 --host 0.0.0.0 $(NEMOTRON_NANO_ARGS) > $(LOG_FILE) 2>&1 & echo $$! > $(PID_FILE); \
 	fi
 
@@ -248,6 +260,21 @@ logs:
 		echo "No log file found at $(LOG_FILE)"; \
 	fi
 
+# vLLM Service Management
+start-vllm:
+	@echo "Starting vLLM service..."
+	@docker compose -f docker/docker-compose.vllm.yml up --build -d
+	@echo "✓ vLLM service started (check with 'make status-vllm')"
+
+stop-vllm:
+	@echo "Stopping vLLM service..."
+	@docker compose -f docker/docker-compose.vllm.yml down
+	@echo "✓ vLLM service stopped"
+
+status-vllm:
+	@echo "vLLM Service Status:"
+	@docker compose -f docker/docker-compose.vllm.yml ps
+
 # Model selection targets
 use-nemotron:
 	@echo "Switching to Nemotron-Mini-4B-Instruct (Single GPU)..."
@@ -288,7 +315,7 @@ use-nemotron-nano:
 	@echo "  Architecture: MoE (3.2B active, 31.6B total)"
 	@echo "  Size: ~2-3 GB (Q4_K_M)"
 	@echo "  Context: 32K tokens"
-	@echo "  GPUs: Dual (67% Intel Arc + 33% Nvidia RTX)"
+	@echo "  GPUs: Dual CUDA (RTX 4070 12GB + RTX 2060 6GB = 18GB total)"
 	@echo ""
 	@echo "Updating OpenCode configuration..."
 	@jq '.model = "llama-cpp/bartowski_nvidia_Nemotron-3-Nano-30B-A3B-GGUF_nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
@@ -299,23 +326,23 @@ use-nemotron-nano:
 	@echo "✓ Switched to Nemotron Nano (Dual GPU)!"
 
 use-qwen32b:
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "❌ ERROR: Qwen2.5-Coder-32B is NOT WORKING"
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Switching to Qwen2.5-Coder-32B-Instruct (Dual GPU - Vulkan)..."
+	@echo "qwen32b" > $(STATE_FILE)
+	@echo "✓ Model configured: Qwen2.5-Coder-32B-Instruct"
+	@echo "  Size: 32B parameters (~19 GB Q4_K_M)"
+	@echo "  Context: 8K tokens (optimized for dual GPU)"
+	@echo "  GPUs: Dual Vulkan (RTX 4070 12GB + Arc A770 16GB)"
+	@echo "  Tensor Split: 1:1.4 (optimized for memory balance)"
 	@echo ""
-	@echo "Issues:"
-	@echo "  • Vulkan corruption: Produces gibberish output (0000..., 9999...)"
-	@echo "  • Memory constraints: Needs ~19.5GB, exceeds Intel Arc 16GB"
-	@echo "  • Work group limits: Exceeds Vulkan device limits"
-	@echo "  • CUDA incompatible: Too large for 12GB Nvidia RTX 4070"
+	@echo "⚠ Note: Using 8K context to ensure stability. Increase to 16K if stable."
 	@echo ""
-	@echo "Alternatives:"
-	@echo "  ✓ make use-qwen            - Qwen 7B (82 tok/s, works perfectly)"
-	@echo "  ✓ make use-nemotron-nano   - Nemotron Nano 30B (31 tok/s, dual GPU)"
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "llama-cpp/bartowski_Qwen2.5-Coder-32B-Instruct-GGUF_Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
 	@echo ""
-	@echo "See VULKAN_ISSUES.md for details."
+	@$(MAKE) restart
 	@echo ""
-	@false
+	@echo "✓ Switched to Qwen2.5-Coder-32B (Dual GPU)!"
 
 use-deepseek:
 	@echo "Switching to DeepSeek-Coder-V2-Lite-Instruct (Single GPU - CUDA)..."
@@ -332,6 +359,22 @@ use-deepseek:
 	@$(MAKE) restart
 	@echo ""
 	@echo "✓ Switched to DeepSeek (Dual GPU)!"
+
+use-nemotron-vllm:
+	@echo "Switching to Nemotron-3-Nano-30B-A3B (vLLM - Dual GPU)..."
+	@echo "nemotron-vllm" > $(STATE_FILE)
+	@echo "✓ Model configured: Nemotron-3-Nano-30B-A3B (vLLM)"
+	@echo "  Architecture: MoE"
+	@echo "  Size: ~30B parameters"
+	@echo "  GPUs: Dual NVIDIA (via vLLM tensor parallelism)"
+	@echo ""
+	@echo "Updating OpenCode configuration to use vLLM endpoint..."
+	@jq '.model = "http://localhost:3336/v1"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated to use vLLM"
+	@echo ""
+	@$(MAKE) start-vllm
+	@echo ""
+	@echo "✓ Switched to Nemotron-3-Nano-30B-A3B via vLLM!"
 
 # Show current model
 current-model:
@@ -452,6 +495,93 @@ test:
 		-d '{"model": "test", "messages": [{"role": "user", "content": "Say hello"}], "max_tokens": 50}' \
 		| jq '.'
 
+# Performance Tests
+test-long-context:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Long Context Test (Stress testing context handling)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "Generating long prompt (~5000 words) to test context handling..."
+	@echo ""
+	@LONG_TEXT=$$(for i in {1..100}; do echo "This is line $$i of a very long context test to verify the model can handle extended inputs without memory issues or performance degradation."; done | paste -sd ' '); \
+	RESPONSE=$$(curl -s http://localhost:11336/v1/chat/completions \
+		-H "Content-Type: application/json" \
+		-d "{\"model\": \"test\", \"messages\": [{\"role\": \"user\", \"content\": \"$$LONG_TEXT. Now summarize what I just said in one sentence.\"}], \"max_tokens\": 100}"); \
+	echo "Response:"; \
+	echo "$$RESPONSE" | jq -r '.choices[0].message.content // "ERROR: No response"'; \
+	echo ""; \
+	echo "Usage Statistics:"; \
+	echo "$$RESPONSE" | jq '.usage // "ERROR: No usage data"'
+	@echo ""
+	@echo "✓ Long context test completed"
+
+test-benchmark:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Token Generation Speed Benchmark"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@for tokens in 50 100 200 500; do \
+		echo "━━━ Testing $$tokens tokens ━━━"; \
+		echo ""; \
+		START=$$(date +%s.%N); \
+		RESPONSE=$$(curl -s http://localhost:11336/v1/chat/completions \
+			-H "Content-Type: application/json" \
+			-d "{\"model\": \"test\", \"messages\": [{\"role\": \"user\", \"content\": \"Write a detailed technical explanation of how neural networks work, covering architecture, training, and inference.\"}], \"max_tokens\": $$tokens}"); \
+		END=$$(date +%s.%N); \
+		ELAPSED=$$(echo "$$END - $$START" | bc); \
+		echo "Response preview:"; \
+		echo "$$RESPONSE" | jq -r '.choices[0].message.content // "ERROR"' | head -5; \
+		echo "..."; \
+		echo ""; \
+		echo "Timing:"; \
+		echo "  Wall time: $$ELAPSED seconds"; \
+		echo "$$RESPONSE" | jq '.usage // {}'; \
+		COMPLETION_TOKENS=$$(echo "$$RESPONSE" | jq -r '.usage.completion_tokens // 0'); \
+		if [ "$$COMPLETION_TOKENS" != "0" ]; then \
+			TOKENS_PER_SEC=$$(echo "scale=2; $$COMPLETION_TOKENS / $$ELAPSED" | bc); \
+			echo "  Generation speed: $$TOKENS_PER_SEC tok/s"; \
+		fi; \
+		echo ""; \
+	done
+	@echo "✓ Benchmark completed"
+
+test-load:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "Continuous Load Test (10 sequential requests)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@SUCCESS=0; \
+	FAIL=0; \
+	for i in {1..10}; do \
+		echo "━━━ Request $$i/10 ━━━"; \
+		START=$$(date +%s.%N); \
+		RESPONSE=$$(curl -s --max-time 30 http://localhost:11336/v1/chat/completions \
+			-H "Content-Type: application/json" \
+			-d '{"model": "test", "messages": [{"role": "user", "content": "Explain the quicksort algorithm in 3 sentences."}], "max_tokens": 200}' 2>&1); \
+		END=$$(date +%s.%N); \
+		ELAPSED=$$(echo "$$END - $$START" | bc); \
+		if echo "$$RESPONSE" | jq -e '.choices[0].message.content' >/dev/null 2>&1; then \
+			echo "✓ Success ($$ELAPSED seconds)"; \
+			echo "$$RESPONSE" | jq -r '.choices[0].message.content' | head -3; \
+			echo "$$RESPONSE" | jq -c '.usage // {}'; \
+			SUCCESS=$$((SUCCESS + 1)); \
+		else \
+			echo "❌ Failed ($$ELAPSED seconds)"; \
+			echo "$$RESPONSE" | head -3; \
+			FAIL=$$((FAIL + 1)); \
+		fi; \
+		echo ""; \
+	done; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	echo "Load Test Summary:"; \
+	echo "  Successful: $$SUCCESS/10"; \
+	echo "  Failed: $$FAIL/10"; \
+	if [ $$FAIL -eq 0 ]; then \
+		echo "  ✓ All requests completed successfully"; \
+	else \
+		echo "  ⚠ Some requests failed - check logs with 'make logs'"; \
+	fi
+
 # GPU check
 gpu-check:
 	@echo "GPU Status:"
@@ -505,7 +635,7 @@ backup:
 	@echo "Backing up configuration..."
 	@mkdir -p backups
 	@cp shell.nix backups/shell.nix.backup.$$(date +%Y%m%d_%H%M%S)
-	@cp router-config.json backups/router-config.json.backup.$$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+	@cp config/router-config.json backups/router-config.json.backup.$$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
 	@cp config/.config/opencode/opencode.json backups/opencode.json.backup.$$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
 	@cp $(STATE_FILE) backups/current-model.backup.$$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
 	@echo "✓ Backup created in ./backups/"
