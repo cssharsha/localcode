@@ -1,0 +1,501 @@
+.PHONY: help setup start stop restart status logs logs-llama logs-llama-live logs-router logs-follow build clean verify test gpu-check model-info backup restore use-nemotron use-qwen use-nemotron-nano use-qwen32b-dualgpu use-deepseek-dualgpu current-model opencode-model config-install config-uninstall config-status config-edit download-progress watch-startup
+
+# Model selection (default: nemotron)
+COMPOSE_FILE ?= docker-compose.yml
+
+# Default target
+help:
+	@echo "OpenCode with llama.cpp - Available commands:"
+	@echo ""
+	@echo "Model Selection (Single GPU - CUDA - Nvidia only):"
+	@echo "  make use-nemotron          - Switch to Nemotron-Mini-4B (4K context, fast)"
+	@echo "  make use-qwen              - Switch to Qwen2.5-Coder-7B (24K context, better)"
+	@echo ""
+	@echo "Model Selection (Dual GPU - Vulkan - Nvidia + Intel Arc):"
+	@echo "  make use-nemotron-nano     - Switch to Nemotron-3-Nano-30B (32K context, MoE)"
+	@echo "  make use-qwen32b-dualgpu   - Switch to Qwen2.5-Coder-32B (32K context, SOTA)"
+	@echo "  make use-deepseek-dualgpu  - Switch to DeepSeek-Coder-V2-Lite (32K context, SOTA)"
+	@echo ""
+	@echo "  make current-model         - Show which model llama-cpp is running"
+	@echo "  make opencode-model        - Show which model OpenCode will use"
+	@echo ""
+	@echo "  make setup          - Initial setup (create directories, check prerequisites)"
+	@echo "  make start          - Start all services"
+	@echo "  make stop           - Stop all services"
+	@echo "  make restart        - Restart all services"
+	@echo "  make build          - Build containers"
+	@echo "  make status         - Show service status"
+	@echo ""
+	@echo "  make logs              - View all logs"
+	@echo "  make logs-llama        - View llama-cpp logs (last 100 lines)"
+	@echo "  make logs-llama-live   - Follow llama-cpp logs in real-time"
+	@echo "  make logs-router       - View router logs"
+	@echo "  make logs-follow       - Follow all logs in real-time"
+	@echo "  make download-progress - Monitor model download progress"
+	@echo "  make watch-startup     - Watch startup with auto-refresh"
+	@echo ""
+	@echo "  make verify         - Verify the setup is working"
+	@echo "  make test           - Test the API endpoint"
+	@echo "  make model-info     - Show model information"
+	@echo "  make gpu-check      - Check GPU status"
+	@echo ""
+	@echo "  make backup         - Backup configuration files"
+	@echo "  make restore        - Restore configuration from backup"
+	@echo "  make clean          - Stop services and remove volumes"
+	@echo "  make clean-all      - Clean everything including downloaded models"
+	@echo ""
+	@echo "Configuration Management:"
+	@echo "  make config-install   - Install OpenCode config to ~/.config/opencode (using stow)"
+	@echo "  make config-uninstall - Remove OpenCode config symlinks"
+	@echo "  make config-status    - Check configuration status"
+	@echo "  make config-edit      - Edit OpenCode configuration"
+
+# Initial setup
+setup:
+	@echo "Setting up directories..."
+	@sudo mkdir -p /data/llama-models
+	@sudo chown -R $(shell id -u):$(shell id -g) /data/llama-models
+	@echo "Checking NVIDIA GPU..."
+	@nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv || \
+		(echo "Warning: NVIDIA GPU not detected or drivers not installed"; exit 1)
+	@echo "Checking Docker..."
+	@docker --version || (echo "Error: Docker not installed"; exit 1)
+	@echo "Setup complete!"
+
+# Start services
+start: up
+up:
+	@echo "Starting services..."
+	@docker compose up -d
+	@echo "Services started!"
+	@echo "Run 'make logs-follow' to monitor startup (model download on first run)"
+
+# Stop services
+stop: down
+down:
+	@echo "Stopping services..."
+	@docker compose down
+	@echo "Services stopped!"
+
+# Restart services
+restart:
+	@echo "Restarting services..."
+	@docker compose restart
+	@echo "Services restarted!"
+
+# Build containers
+build:
+	@echo "Building containers..."
+	@docker compose build --no-cache
+	@echo "Build complete!"
+
+# Service status
+status:
+	@echo "Service Status:"
+	@docker compose ps
+	@echo ""
+	@echo "Container Stats:"
+	@docker stats --no-stream llama-cpp claude-router 2>/dev/null || echo "Containers not running"
+
+# View logs
+logs:
+	@docker compose logs --tail=100
+
+logs-llama:
+	@docker logs --tail=100 llama-cpp
+
+logs-llama-live:
+	@echo "Following llama-cpp logs (Ctrl+C to exit)..."
+	@docker logs -f --tail=50 llama-cpp 2>&1 | grep -v "^BUG in find_stowed_path" || true
+
+download-progress:
+	@echo "Monitoring model download progress..."
+	@echo "This will show real-time download status and server startup"
+	@echo "Press Ctrl+C to exit"
+	@echo ""
+	@if [ "$$(docker ps -q -f name=llama-cpp)" ]; then \
+		docker exec -it llama-cpp sh -c ' \
+			echo "Checking download status..."; \
+			while true; do \
+				if ls -lh /root/.cache/llama.cpp/*.gguf 2>/dev/null; then \
+					echo ""; \
+					echo "Model files:"; \
+					ls -lh /root/.cache/llama.cpp/*.gguf 2>/dev/null; \
+					echo ""; \
+					if pgrep -f "llama-server" > /dev/null; then \
+						echo "✓ Server is running!"; \
+						break; \
+					else \
+						echo "Downloading... (refresh in 2s)"; \
+					fi; \
+				else \
+					echo "Waiting for download to start..."; \
+				fi; \
+				sleep 2; \
+				clear; \
+			done \
+		' 2>/dev/null || echo "Container not running"; \
+	else \
+		echo "❌ llama-cpp container is not running"; \
+		echo "Start with: make start"; \
+	fi
+
+watch-startup:
+	@echo "Watching startup process..."
+	@echo "This shows log tail and refreshes every 2 seconds"
+	@echo "Press Ctrl+C to exit"
+	@echo ""
+	@watch -n 2 -c 'docker logs --tail=30 llama-cpp 2>&1 | tail -20'
+
+logs-router:
+	@docker logs --tail=100 claude-router
+
+logs-follow:
+	@docker compose logs -f --tail=100
+
+# Verify setup
+verify:
+	@echo "Verifying llama-cpp is running..."
+	@curl -s http://localhost:11336/v1/models || (echo "Error: llama-cpp not responding"; exit 1)
+	@echo "✓ llama-cpp is running"
+	@echo ""
+	@echo "Verifying router is running..."
+	@docker logs claude-router 2>&1 | grep -q "started" && echo "✓ Claude router is running" || echo "⚠ Router may not be ready"
+	@echo ""
+	@echo "All services verified!"
+
+# Test API endpoint
+test:
+	@echo "Testing llama-cpp API..."
+	@curl -s http://localhost:11336/v1/chat/completions \
+		-H "Content-Type: application/json" \
+		-d '{"model": "Nemotron-Mini-4B-Instruct", "messages": [{"role": "user", "content": "Say hello"}], "max_tokens": 50}' \
+		| jq '.' || (echo "Error: API test failed"; exit 1)
+
+# Show model information
+model-info:
+	@echo "Available models:"
+	@curl -s http://localhost:11336/v1/models | jq '.'
+	@echo ""
+	@echo "Model files in storage:"
+	@ls -lh /data/llama-models/ 2>/dev/null || echo "No models downloaded yet"
+
+# Check GPU status
+gpu-check:
+	@echo "NVIDIA GPU Status:"
+	@nvidia-smi
+	@echo ""
+	@echo "GPU usage in llama-cpp container:"
+	@docker exec llama-cpp nvidia-smi 2>/dev/null || echo "Container not running or GPU not accessible"
+
+# Backup configuration
+backup:
+	@echo "Backing up configuration files..."
+	@mkdir -p backups
+	@cp docker-compose.yml backups/docker-compose.yml.backup.$$(date +%Y%m%d_%H%M%S)
+	@cp router-config.json backups/router-config.json.backup.$$(date +%Y%m%d_%H%M%S)
+	@cp opencode.json backups/opencode.json.backup.$$(date +%Y%m%d_%H%M%S)
+	@echo "Backup created in ./backups/"
+	@ls -lh backups/
+
+# Restore from backup (uses most recent backup)
+restore:
+	@echo "Available backups:"
+	@ls -lt backups/ | head -10
+	@echo ""
+	@echo "Restoring most recent backup..."
+	@cp $$(ls -t backups/docker-compose.yml.backup.* | head -1) docker-compose.yml
+	@cp $$(ls -t backups/router-config.json.backup.* | head -1) router-config.json
+	@cp $$(ls -t backups/opencode.json.backup.* | head -1) opencode.json
+	@echo "Configuration restored!"
+
+# Clean up
+clean:
+	@echo "Stopping services and removing containers..."
+	@docker compose down -v
+	@echo "Clean complete! (model files preserved)"
+
+clean-all: clean
+	@echo "Removing model files..."
+	@sudo rm -rf /data/llama-models/*
+	@echo "All data cleaned!"
+
+# Quick commands for common operations
+pull-logs: logs-follow
+watch-gpu:
+	@watch -n 1 nvidia-smi
+
+# First time setup - complete flow
+first-run: setup start logs-follow
+
+# Model selection
+use-nemotron:
+	@echo "Switching to Nemotron-Mini-4B-Instruct (Single GPU)..."
+	@cp docker-compose.nemotron.yml docker-compose.yml
+	@echo "✓ Nemotron configuration activated"
+	@echo ""
+	@echo "Model: Nemotron-Mini-4B-Instruct"
+	@echo "Size: 4B parameters (~2.7 GB)"
+	@echo "Context: 4K tokens (training limit)"
+	@echo "GPU: Single (Nvidia RTX 4070) via CUDA"
+	@echo "Speed: Fast, low latency"
+	@echo ""
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "llama-cpp/bartowski_Nemotron-Mini-4B-Instruct-GGUF_Nemotron-Mini-4B-Instruct-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
+	@echo ""
+	@$(MAKE) stop
+	@$(MAKE) start
+	@echo ""
+	@echo "✓ Switched to Nemotron (Single GPU)!"
+	@echo "ℹ OpenCode will now use: Nemotron Mini 4B"
+	@echo "ℹ Monitor with: make logs-follow"
+
+use-qwen:
+	@echo "Switching to Qwen2.5-Coder-7B-Instruct (Single GPU)..."
+	@cp docker-compose.qwen.yml docker-compose.yml
+	@echo "✓ Qwen configuration activated"
+	@echo ""
+	@echo "Model: Qwen2.5-Coder-7B-Instruct"
+	@echo "Size: 7B parameters (~4.4 GB)"
+	@echo "Context: 24K tokens (up to 32K capable)"
+	@echo "GPU: Single (Nvidia RTX 4070) via CUDA"
+	@echo "Speed: Moderate, good balance"
+	@echo "Quality: Better for coding"
+	@echo ""
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "llama-cpp/bartowski_Qwen2.5-Coder-7B-Instruct-GGUF_Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
+	@echo ""
+	@$(MAKE) stop
+	@$(MAKE) start
+	@echo ""
+	@echo "✓ Switched to Qwen 7B (Single GPU)!"
+	@echo "ℹ OpenCode will now use: Qwen2.5 Coder 7B"
+	@echo "ℹ Monitor with: make logs-follow"
+
+use-nemotron-nano:
+	@echo "Switching to Nemotron-3-Nano-30B (MoE, Dual GPU)..."
+	@cp docker-compose.nemotron-nano.yml docker-compose.yml
+	@echo "✓ Nemotron Nano Dual GPU configuration activated"
+	@echo ""
+	@echo "Model: Nemotron-3-Nano-30B-A3B"
+	@echo "Architecture: MoE (3.2B active, 31.6B total)"
+	@echo "Size: ~2-3 GB (Q4_K_M)"
+	@echo "Context: 32K tokens"
+	@echo "GPUs: Dual (Nvidia RTX 4070 + Intel Arc A770) via Vulkan"
+	@echo "Features: Reasoning mode, Mamba-2 + Transformer"
+	@echo ""
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "llama-cpp/bartowski_nvidia_Nemotron-3-Nano-30B-A3B-GGUF_nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
+	@echo ""
+	@$(MAKE) stop
+	@$(MAKE) start
+	@echo ""
+	@echo "✓ Switched to Nemotron Nano (Dual GPU)!"
+	@echo "ℹ OpenCode will now use: Nemotron Nano 30B MoE"
+	@echo "ℹ Monitor with: make logs-follow"
+
+use-qwen32b-dualgpu:
+	@echo "Switching to Qwen2.5-Coder-32B-Instruct (Dual GPU)..."
+	@cp docker-compose.qwen32b-dualgpu.yml docker-compose.yml
+	@echo "✓ Qwen 32B Dual GPU configuration activated"
+	@echo ""
+	@echo "Model: Qwen2.5-Coder-32B-Instruct"
+	@echo "Size: 32B parameters (~18 GB Q4_K_M)"
+	@echo "Context: 32K tokens (up to 128K capable)"
+	@echo "GPUs: Dual (Nvidia RTX 4070 + Intel Arc A770) via Vulkan"
+	@echo "Quality: SOTA for coding tasks"
+	@echo ""
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "llama-cpp/bartowski_Qwen2.5-Coder-32B-Instruct-GGUF_Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
+	@echo ""
+	@$(MAKE) stop
+	@$(MAKE) start
+	@echo ""
+	@echo "✓ Switched to Qwen 32B (Dual GPU)!"
+	@echo "ℹ OpenCode will now use: Qwen2.5 Coder 32B"
+	@echo "ℹ Monitor with: make logs-follow"
+
+use-deepseek-dualgpu:
+	@echo "Switching to DeepSeek-Coder-V2-Lite-Instruct (Dual GPU)..."
+	@cp docker-compose.deepseek-dualgpu.yml docker-compose.yml
+	@echo "✓ DeepSeek Dual GPU configuration activated"
+	@echo ""
+	@echo "Model: DeepSeek-Coder-V2-Lite-Instruct"
+	@echo "Size: 16B parameters (~9 GB Q4_K_M)"
+	@echo "Context: 32K tokens (up to 163K capable)"
+	@echo "GPUs: Dual (Nvidia RTX 4070 + Intel Arc A770) via Vulkan"
+	@echo "Quality: SOTA for coding tasks, trained on 10.2T tokens"
+	@echo ""
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "llama-cpp/bartowski_DeepSeek-Coder-V2-Lite-Instruct-GGUF_DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
+	@echo ""
+	@$(MAKE) stop
+	@$(MAKE) start
+	@echo ""
+	@echo "✓ Switched to DeepSeek (Dual GPU)!"
+	@echo "ℹ OpenCode will now use: DeepSeek Coder V2 Lite"
+	@echo "ℹ Monitor with: make logs-follow"
+
+current-model:
+	@echo "Checking running model..."
+	@MODEL=$$(curl -s http://localhost:11336/v1/models 2>/dev/null | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4); \
+	if [ -z "$$MODEL" ]; then \
+		echo "⚠ Service not running or not responding"; \
+		echo "  Config file: $$(if grep -q "nvidia_Nemotron-3-Nano" docker-compose.yml; then echo "Nemotron Nano"; elif grep -q "Nemotron-Mini" docker-compose.yml; then echo "Nemotron Mini"; elif grep -q "Qwen2.5-Coder-32B" docker-compose.yml; then echo "Qwen 32B (Dual GPU)"; elif grep -q "DeepSeek-Coder-V2" docker-compose.yml; then echo "DeepSeek V2 (Dual GPU)"; elif grep -q "Qwen2.5-Coder-7B" docker-compose.yml; then echo "Qwen 7B"; else echo "Unknown"; fi)"; \
+	elif echo "$$MODEL" | grep -qi "nvidia_nemotron-3-nano\|nemotron-3-nano"; then \
+		echo "✓ Running: Nemotron-3-Nano-30B (MoE)"; \
+		echo "  Context: 32K tokens"; \
+		echo "  Active params: 3.2B"; \
+	elif echo "$$MODEL" | grep -qi "nemotron.*mini\|minitron"; then \
+		echo "✓ Running: Nemotron-Mini-4B-Instruct"; \
+		echo "  Context: 4K tokens (training limit)"; \
+	elif echo "$$MODEL" | grep -qi "qwen2.5-coder-32b"; then \
+		echo "✓ Running: Qwen2.5-Coder-32B-Instruct (Dual GPU)"; \
+		echo "  Context: 32K tokens"; \
+		echo "  GPUs: Nvidia RTX 4070 + Intel Arc A770"; \
+	elif echo "$$MODEL" | grep -qi "deepseek-coder-v2"; then \
+		echo "✓ Running: DeepSeek-Coder-V2-Lite-Instruct (Dual GPU)"; \
+		echo "  Context: 32K tokens"; \
+		echo "  GPUs: Nvidia RTX 4070 + Intel Arc A770"; \
+	elif echo "$$MODEL" | grep -qi "qwen"; then \
+		echo "✓ Running: Qwen2.5-Coder-7B-Instruct"; \
+		echo "  Context: 24K tokens"; \
+	else \
+		echo "✓ Running: $$MODEL"; \
+	fi
+
+# Configuration Management with GNU Stow
+config-install:
+	@echo "Installing OpenCode configuration to ~/.config/opencode..."
+	@if ! command -v stow >/dev/null 2>&1; then \
+		echo "❌ Error: GNU Stow is not installed"; \
+		echo ""; \
+		echo "Install with:"; \
+		echo "  Ubuntu/Debian: sudo apt install stow"; \
+		echo "  Arch Linux:    sudo pacman -S stow"; \
+		echo "  macOS:         brew install stow"; \
+		exit 1; \
+	fi
+	@mkdir -p ~/.config
+	@if [ -d ~/.config/opencode ] && [ ! -L ~/.config/opencode/opencode.json ]; then \
+		echo "⚠ Warning: ~/.config/opencode exists and is not managed by stow"; \
+		echo "Creating backup..."; \
+		mv ~/.config/opencode ~/.config/opencode.backup.$$(date +%Y%m%d_%H%M%S); \
+		echo "✓ Backup created: ~/.config/opencode.backup.$$(date +%Y%m%d_%H%M%S)"; \
+	fi
+	@cd $$(pwd) && stow -v -t ~ -d . config 2>&1 | grep -v "^BUG in find_stowed_path" || true
+	@echo ""
+	@echo "✓ OpenCode configuration installed!"
+	@echo ""
+	@echo "Configuration location:"
+	@echo "  Source: $$(pwd)/config/.config/opencode/"
+	@echo "  Target: ~/.config/opencode/ (symlinked)"
+	@echo ""
+	@echo "Files managed:"
+	@ls -la ~/.config/opencode/ | grep "^l" | awk '{print "  " $$9 " -> " $$11}'
+	@echo ""
+	@echo "To edit: make config-edit"
+
+config-uninstall:
+	@echo "Uninstalling OpenCode configuration from ~/.config/opencode..."
+	@if ! command -v stow >/dev/null 2>&1; then \
+		echo "❌ Error: GNU Stow is not installed"; \
+		exit 1; \
+	fi
+	@cd $$(pwd) && stow -v -D -t ~ -d . config 2>&1 | grep -v "^BUG in find_stowed_path" || true
+	@echo "✓ OpenCode configuration uninstalled!"
+	@echo ""
+	@echo "Note: Original files still exist in $$(pwd)/config/.config/opencode/"
+
+config-status:
+	@echo "OpenCode Configuration Status:"
+	@echo ""
+	@echo "Source directory:"
+	@echo "  $$(pwd)/config/.config/opencode/"
+	@if [ -f config/.config/opencode/opencode.json ]; then \
+		echo "  ✓ opencode.json exists"; \
+	else \
+		echo "  ❌ opencode.json missing"; \
+	fi
+	@if [ -f config/.config/opencode/.opencode/instructions.md ]; then \
+		echo "  ✓ .opencode/instructions.md exists"; \
+	else \
+		echo "  ❌ .opencode/instructions.md missing"; \
+	fi
+	@echo ""
+	@echo "Target directory (~/.config/opencode/):"
+	@if [ -L ~/.config/opencode ]; then \
+		echo "  ✓ Managed by stow (directory symlinked)"; \
+		echo "  ✓ opencode -> $$(readlink ~/.config/opencode)"; \
+	elif [ -d ~/.config/opencode ]; then \
+		if [ -L ~/.config/opencode/opencode.json ]; then \
+			echo "  ✓ Managed by stow (files symlinked)"; \
+			echo "  ✓ opencode.json -> $$(readlink ~/.config/opencode/opencode.json)"; \
+		elif [ -f ~/.config/opencode/opencode.json ]; then \
+			echo "  ⚠ Not managed by stow (regular file)"; \
+			echo "  ℹ Run 'make config-install' to manage with stow"; \
+		else \
+			echo "  ⚠ Directory exists but opencode.json missing"; \
+		fi; \
+	else \
+		echo "  ❌ Not installed"; \
+		echo "  ℹ Run 'make config-install' to install"; \
+	fi
+	@echo ""
+	@if command -v stow >/dev/null 2>&1; then \
+		echo "GNU Stow: ✓ Installed ($$(stow --version | head -1))"; \
+	else \
+		echo "GNU Stow: ❌ Not installed"; \
+	fi
+
+config-edit:
+	@if [ -n "$$EDITOR" ]; then \
+		$$EDITOR config/.config/opencode/opencode.json; \
+	elif command -v vim >/dev/null 2>&1; then \
+		vim config/.config/opencode/opencode.json; \
+	elif command -v nano >/dev/null 2>&1; then \
+		nano config/.config/opencode/opencode.json; \
+	else \
+		echo "No editor found. Please set EDITOR environment variable or install vim/nano"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "Configuration updated in: $$(pwd)/config/.config/opencode/opencode.json"
+	@if [ -L ~/.config/opencode ]; then \
+		echo "✓ Changes are automatically reflected in ~/.config/opencode/ (symlinked)"; \
+	else \
+		echo "⚠ Run 'make config-install' to sync changes to ~/.config/opencode/"; \
+	fi
+
+opencode-model:
+	@echo "OpenCode Model Configuration:"
+	@echo ""
+	@OPENCODE_MODEL=$$(jq -r '.model // "not set"' ~/.config/opencode/opencode.json 2>/dev/null); \
+	if [ "$$OPENCODE_MODEL" = "not set" ] || [ -z "$$OPENCODE_MODEL" ]; then \
+		echo "  ❌ No model configured in OpenCode"; \
+		echo "  ℹ Run 'make use-<model>' to set up"; \
+	else \
+		echo "  ✓ Configured model: $$OPENCODE_MODEL"; \
+		MODEL_NAME=$$(echo $$OPENCODE_MODEL | sed 's/.*bartowski_//; s/_GGUF.*//; s/_/ /g'); \
+		echo "  ℹ Friendly name: $$MODEL_NAME"; \
+	fi
+	@echo ""
+	@RUNNING_MODEL=$$(curl -s http://localhost:11336/v1/models 2>/dev/null | jq -r '.data[0].id // "not running"'); \
+	OPENCODE_MODEL=$$(jq -r '.model // "not set"' ~/.config/opencode/opencode.json 2>/dev/null | sed 's/llama-cpp\///'); \
+	if [ "$$RUNNING_MODEL" = "$$OPENCODE_MODEL" ]; then \
+		echo "  ✓ OpenCode config matches running model"; \
+	elif [ "$$RUNNING_MODEL" = "not running" ]; then \
+		echo "  ⚠ llama-cpp is not running"; \
+		echo "  ℹ Run 'make start' to start services"; \
+	else \
+		echo "  ⚠ MISMATCH DETECTED!"; \
+		echo "  OpenCode expects: $$OPENCODE_MODEL"; \
+		echo "  Actually running: $$RUNNING_MODEL"; \
+		echo ""; \
+		echo "  ℹ Run 'make use-<model>' to sync both"; \
+	fi

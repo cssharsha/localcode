@@ -1,0 +1,25 @@
+# Custom llama.cpp with both Nvidia and Intel Vulkan support
+FROM ghcr.io/ggml-org/llama.cpp:server-vulkan
+
+# Install Nvidia Vulkan drivers
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    wget \
+    ca-certificates \
+    gnupg && \
+    # Add Nvidia repository (modern method)
+    wget -qO - https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub | \
+    gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" | \
+    tee /etc/apt/sources.list.d/cuda.list && \
+    apt-get update && \
+    # Install Nvidia Vulkan ICD (included in libnvidia-gl-575)
+    apt-get install -y --no-install-recommends \
+    nvidia-utils-575 \
+    libnvidia-gl-575 && \
+    # Cleanup
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify Vulkan setup
+RUN echo "Vulkan drivers installed"

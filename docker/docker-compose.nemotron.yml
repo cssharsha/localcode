@@ -1,0 +1,49 @@
+services:
+  llama-cpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-cpp
+    restart: always
+    ports:
+      - "11336:8080"
+    command:
+      - --hf-repo
+      - bartowski/Nemotron-Mini-4B-Instruct-GGUF
+      - --hf-file
+      - Nemotron-Mini-4B-Instruct-Q4_K_M.gguf
+      - --ctx-size
+      - "16384"
+      - --rope-scaling
+      - linear
+      - --rope-scale
+      - "4.0"
+      - --n-gpu-layers
+      - "-1"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --parallel
+      - "1"
+      - --threads
+      - "8"
+      - --metrics
+    volumes:
+      - /data/llama-models:/root/.cache/llama.cpp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  claude-router:
+    build: .
+    container_name: claude-router
+    restart: always
+    ports:
+      - "3000:3456"
+    volumes:
+      - ./router-config.json:/root/.claude-code-router/config.json
+    depends_on:
+      - llama-cpp

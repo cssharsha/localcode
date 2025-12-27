@@ -1,0 +1,23 @@
+{
+  "Providers": {
+    "llama-cpp": {
+      "url": "http://localhost:11336/v1/chat/completions",
+      "apiKey": "sk-your-api-key"
+    }
+  },
+  "Router": {
+    "defaultProvider": "llama-cpp",
+    "routes": [
+      {
+        "models": [
+          "bartowski/Nemotron-Mini-4B-Instruct-GGUF/Nemotron-Mini-4B-Instruct-Q4_K_M.gguf",
+          "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+          "bartowski/nvidia_Nemotron-3-Nano-30B-A3B-GGUF/nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf",
+          "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+          "bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf"
+        ],
+        "provider": "llama-cpp"
+      }
+    ]
+  }
+}

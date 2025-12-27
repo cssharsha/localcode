@@ -1,0 +1,27 @@
+services:
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    container_name: vllm
+    restart: always
+    ports:
+      - "3336:8000" # Using custom host port 3336 mapped to container port 8000
+    environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    command:
+      - "--host=0.0.0.0"
+      - "--model=/root/.cache/huggingface/bartowski_nvidia_Nemotron-3-Nano-30B-A3B-GGUF_nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf"
+      - "--tokenizer=nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+      - "--tensor-parallel-size=2"
+      - "--disable-log-stats"
+      - "--gpu-memory-utilization=0.95"
+    volumes:
+      - /data/llama-models:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility, compute]

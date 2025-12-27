@@ -1,0 +1,62 @@
+services:
+  llama-cpp:
+    build:
+      context: .
+      dockerfile: Dockerfile.llamacpp-vulkan-dual
+    image: llamacpp-vulkan-dual:latest
+    container_name: llama-cpp
+    restart: always
+    ports:
+      - "11336:8080"
+    command:
+      - --hf-repo
+      - bartowski/nvidia_Nemotron-3-Nano-30B-A3B-GGUF
+      - --hf-file
+      - nvidia_Nemotron-3-Nano-30B-A3B-Q4_K_M.gguf
+      - --ctx-size
+      - "16384"
+      - --batch-size
+      - "512"
+      - --ubatch-size
+      - "256"
+      - --n-gpu-layers
+      - "-1"
+      - --split-mode
+      - layer
+      - --tensor-split
+      - "1,1"
+      - --main-gpu
+      - "0"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --parallel
+      - "1"
+      - --threads
+      - "8"
+      - --metrics
+    volumes:
+      - /data/llama-models:/root/.cache/llama.cpp
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - GGML_VK_DEBUG=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility, compute]
+
+  claude-router:
+    build: .
+    container_name: claude-router
+    restart: always
+    ports:
+      - "3000:3456"
+    volumes:
+      - ../config/router-config.json:/root/.claude-code-router/config.json
+    depends_on:
+      - llama-cpp
