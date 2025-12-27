@@ -1,4 +1,4 @@
-.PHONY: help setup build install start stop restart status logs test test-long-context test-benchmark test-load verify gpu-check model-info backup restore use-nemotron use-qwen use-nemotron-nano use-qwen32b use-deepseek use-nemotron-vllm current-model model-status opencode-model config-install config-uninstall config-status config-edit clean
+.PHONY: help setup build install start stop restart status logs test test-long-context test-benchmark test-load verify gpu-check model-info backup restore use-nemotron use-qwen use-nemotron-nano use-qwen32b use-deepseek use-nemotron-vllm use-gemini current-model model-status opencode-model config-install config-uninstall config-status config-edit clean
 
 # Directories
 LLAMA_SRC = /tmp/llama.cpp
@@ -68,6 +68,9 @@ help:
 	@echo ""
 	@echo "Model Selection (Single GPU - Nvidia CUDA only):"
 	@echo "  make use-deepseek       - DeepSeek-Coder-V2-Lite (32K context, 33 tok/s) [Vulkan incompatible]"
+	@echo ""
+	@echo "Model Selection (Cloud Providers):"
+	@echo "  make use-gemini         - Google Gemini 2.0 Flash (Experimental)"
 	@echo ""
 	@echo "Information:"
 	@echo "  make current-model  - Show which model is configured/running"
@@ -376,6 +379,22 @@ use-nemotron-vllm:
 	@echo ""
 	@echo "✓ Switched to Nemotron-3-Nano-30B-A3B via vLLM!"
 
+use-gemini:
+	@echo "Switching to Google Gemini..."
+	@if ! opencode auth list 2>&1 | grep -q "Google"; then \
+		echo "Gemini login not found. Starting authentication..."; \
+		opencode auth login google; \
+	fi
+	@echo "gemini" > $(STATE_FILE)
+	@echo "✓ Model configured: Google Gemini"
+	@echo "  Model: gemini-2.0-flash-exp"
+	@echo ""
+	@echo "Updating OpenCode configuration..."
+	@jq '.model = "google/gemini-2.0-flash-exp"' ~/.config/opencode/opencode.json > /tmp/opencode.json && mv /tmp/opencode.json ~/.config/opencode/opencode.json
+	@echo "✓ OpenCode config updated"
+	@echo ""
+	@echo "✓ Switched to Gemini!"
+
 # Show current model
 current-model:
 	@echo "Current Model Configuration:"
@@ -615,8 +634,11 @@ config-uninstall:
 
 config-status:
 	@echo "OpenCode Configuration Status:"
-	@if [ -L ~/.config/opencode/opencode.json ]; then \
-		echo "  ✓ Managed by stow"; \
+	@if [ -L ~/.config/opencode ]; then \
+		echo "  ✓ Managed by stow (directory symlink)"; \
+		ls -ld ~/.config/opencode; \
+	elif [ -L ~/.config/opencode/opencode.json ]; then \
+		echo "  ✓ Managed by stow (file symlink)"; \
 	elif [ -f ~/.config/opencode/opencode.json ]; then \
 		echo "  ⚠ Not managed by stow"; \
 	else \
